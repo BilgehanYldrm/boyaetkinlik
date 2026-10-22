@@ -1,0 +1,467 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\ColoringPage;
+use App\Models\Setting;
+use App\Support\PhpmailerSmtp;
+use App\Support\FileFormatDownloadService;
+use Exception;
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\SMTP;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
+
+class ColoringPageController extends Controller
+{
+    public function show(ColoringPage $coloringPage, FileFormatDownloadService $downloadService)
+    {
+        $mainRelative = $coloringPage->mainDownloadRelativePath();
+        $sourceExtension = $downloadService->sourceExtension($mainRelative);
+        $mainFileReady = $mainRelative !== ''
+            && ! $coloringPage->mainFilePathLooksLikeCoverFolder()
+            && $coloringPage->resolveMainFileStorage() !== null;
+
+        return view('frontend.product', [
+            'coloringPage' => $coloringPage,
+            'downloadFormats' => $downloadService->downloadOptions($sourceExtension),
+            'mainFileReady' => $mainFileReady,
+        ]);
+    }
+
+    public function downloadFree(Request $request, ColoringPage $coloringPage, FileFormatDownloadService $downloadService)
+    {
+        abort_unless($coloringPage->is_free, 403);
+
+        $requestedFormat = $request->string('format')->toString();
+        $requestedFormat = $downloadService->normalizeFormat($requestedFormat ?: null);
+
+        if ($requestedFormat !== null && ! in_array($requestedFormat, $downloadService->allowedFormats(), true)) {
+            abort(422, 'Geçersiz dosya formatı.');
+        }
+
+        /** @var FilesystemAdapter $disk */
+        $disk = $coloringPage->diskForMainFile();
+
+        return $downloadService->download(
+            $disk,
+            $coloringPage->mainDownloadRelativePath(),
+            $coloringPage->title,
+            $requestedFormat
+        );
+    }
+
+    public function printFree(Request $request, ColoringPage $coloringPage, FileFormatDownloadService $downloadService)
+    {
+        abort_unless($coloringPage->is_free, 403);
+
+        $sourceExtension = $downloadService->sourceExtension($coloringPage->mainDownloadRelativePath());
+        $availableFormats = $downloadService->downloadOptions($sourceExtension);
+
+        $requestedFormat = $request->string('format')->toString();
+        $requestedFormat = $downloadService->normalizeFormat($requestedFormat ?: $sourceExtension);
+
+        if (! in_array((string) $requestedFormat, $availableFormats, true)) {
+            abort(422, 'Geçersiz dosya formatı.');
+        }
+
+        /** @var FilesystemAdapter $disk */
+        $disk = $coloringPage->diskForMainFile();
+
+        return $downloadService->inline(
+            $disk,
+            $coloringPage->mainDownloadRelativePath(),
+            $coloringPage->title,
+            $requestedFormat
+        );
+    }
+
+    public function sendFreeToEmail(Request $request, ColoringPage $coloringPage, FileFormatDownloadService $downloadService): RedirectResponse
+    {
+        abort_unless($coloringPage->is_free, 403);
+
+        $data = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+            'format' => ['nullable', 'string', 'max:12'],
+        ]);
+
+        if ($coloringPage->mainFilePathLooksLikeCoverFolder()) {
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'email_send' => 'Bu kayıtta ana dosya yolu hatalı görünüyor (kapak klasörü). Yönetim panelinde «Dosya (PDF/PNG/…)» alanına asıl indirilecek dosyayı yeniden yükleyin; kapak ayrı alanda kalmalıdır.',
+                ]);
+        }
+
+        $mainRelative = $coloringPage->mainDownloadRelativePath();
+
+        $sourceExtension = $downloadService->sourceExtension($mainRelative);
+        $availableFormats = $downloadService->downloadOptions($sourceExtension);
+
+        $requestedFormat = $downloadService->normalizeFormat($data['format'] ?? null) ?: $sourceExtension;
+        if (! in_array($requestedFormat, $availableFormats, true)) {
+            return back()
+                ->withInput()
+                ->withErrors(['format' => 'Geçersiz dosya formatı.']);
+        }
+
+        /** @var FilesystemAdapter $disk */
+        $disk = $coloringPage->diskForMainFile();
+
+        try {
+            $attachment = $downloadService->prepareAttachment(
+                $disk,
+                $mainRelative,
+                $coloringPage->title,
+                $requestedFormat
+            );
+
+            try {
+                $this->sendFreeFileMail($data['email'], $coloringPage->title, $attachment['path'], $attachment['filename']);
+            } finally {
+                if ($attachment['delete_after_send'] && is_file($attachment['path'])) {
+                    @unlink($attachment['path']);
+                }
+            }
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return back()
+                ->withInput()
+                ->withErrors(['email_send' => 'E-posta gönderilemedi. Dosya hazırlanamadı veya sunucu ayarlarını kontrol edin.']);
+        }
+
+        return back()->with('free_email_sent', true);
+    }
+
+    private function sendFreeFileMail(string $toEmail, string $pageTitle, string $absolutePath, string $attachmentFilename): void
+    {
+        $smtpHost = Setting::getValue('smtp_host', '');
+        $smtpPort = (int) (Setting::getValue('smtp_port', '587') ?: 587);
+        $smtpUsername = Setting::getValue('smtp_username', '');
+        $smtpPassword = Setting::getValue('smtp_password', '');
+        $smtpEncryption = strtolower((string) (Setting::getValue('smtp_encryption', 'tls') ?: 'tls'));
+        $fromEmail = Setting::getValue('smtp_from_email', $smtpUsername);
+        $fromName = Setting::getValue('smtp_from_name', 'Boya Etkinlik');
+
+        if (! $smtpHost || ! $smtpPort || ! $smtpUsername || ! $smtpPassword || ! $fromEmail) {
+            throw new Exception('SMTP ayarları eksik.');
+        }
+
+        $absolutePath = realpath($absolutePath) ?: $absolutePath;
+
+        if (! is_file($absolutePath) || ! is_readable($absolutePath)) {
+            throw new Exception('Gönderilecek dosya bulunamadı.');
+        }
+
+        $mailer = new PHPMailer(true);
+        $mailer->isSMTP();
+        $mailer->Host = $smtpHost;
+        $mailer->Port = $smtpPort;
+        $mailer->SMTPAuth = true;
+        $mailer->Username = $smtpUsername;
+        $mailer->Password = $smtpPassword;
+        $mailer->SMTPSecure = $smtpEncryption === 'ssl' ? PHPMailer::ENCRYPTION_SMTPS : PHPMailer::ENCRYPTION_STARTTLS;
+        $mailer->SMTPDebug = SMTP::DEBUG_OFF;
+        $mailer->CharSet = 'UTF-8';
+        PhpmailerSmtp::applyTransportDefaults($mailer);
+
+        $mailer->setFrom($fromEmail, $fromName ?: 'Boya Etkinlik');
+        $mailer->addAddress($toEmail);
+
+        $mailer->isHTML(true);
+        $appName = config('app.name', 'Boya Etkinlik');
+        $safeTitle = e($pageTitle);
+        $mailer->Subject = $appName.' — '.$pageTitle.' (ücretsiz içerik)';
+        $mailer->Body = <<<HTML
+<!doctype html>
+<html lang="tr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:24px;font-family:Inter,Arial,sans-serif;color:#0f172a;background:#f8fafc;">
+    <p style="margin:0 0 12px;">Merhaba,</p>
+    <p style="margin:0 0 12px;">İstediğiniz ücretsiz boyama sayfası ektedir: <strong>{$safeTitle}</strong></p>
+    <p style="margin:0 0 12px;color:#64748b;font-size:14px;">İyi eğlenceler!</p>
+    <p style="margin:16px 0 0;color:#94a3b8;font-size:12px;">{$appName}</p>
+</body>
+</html>
+HTML;
+        $mailer->AltBody = "Ücretsiz boyama sayfası ektedir: {$pageTitle}\n\n{$appName}";
+
+        $mailer->addAttachment($absolutePath, $attachmentFilename);
+
+        $mailer->send();
+    }
+
+    public function previewImage(ColoringPage $coloringPage): StreamedResponse
+    {
+        // Güvenlik: Asıl indirilebilir dosyayı (pdf/png/jpg/jpeg) preview endpointinden asla servis etmeyelim.
+        // Yalnızca kapak görseli (cover_image_path) servis edilir.
+        if (! $coloringPage->cover_image_path) {
+            abort(404);
+        }
+
+        $coverExt = strtolower((string) pathinfo($coloringPage->cover_image_path, PATHINFO_EXTENSION));
+        $isImageCover = in_array($coverExt, ['png', 'jpg', 'jpeg'], true);
+
+        /** @var FilesystemAdapter $publicDisk */
+        $publicDisk = Storage::disk('public');
+
+        if (! $isImageCover || ! $publicDisk->exists($coloringPage->cover_image_path)) {
+            abort(404);
+        }
+
+        return $publicDisk->response($coloringPage->cover_image_path);
+    }
+
+    /**
+     * Ücretli ürünler: kullanıcı "bağlantıyı/hedefi farklı kaydettiğinde" indirilebilecek küçük HTML.
+     * Açıldığında ilgili ürün sayfasına (mutlak URL) gider; filigran veya görsel işleme yoktur.
+     */
+    public function previewDoorHtml(ColoringPage $coloringPage): Response
+    {
+        abort_if($coloringPage->is_free, 404);
+
+        $target = route('products.show', $coloringPage, true);
+        $title = htmlspecialchars($coloringPage->title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $targetEsc = htmlspecialchars($target, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $targetJson = json_encode($target, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP);
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{$title} — Boya Etkinlik</title>
+<link rel="canonical" href="{$targetEsc}">
+<meta http-equiv="refresh" content="0;url={$targetEsc}">
+</head>
+<body style="font-family:system-ui,Segoe UI,sans-serif;margin:2rem;line-height:1.6;color:#0f172a;">
+<p>Ürün sayfasına yönlendiriliyorsunuz.</p>
+<p><a href="{$targetEsc}">Sayfayı açmak için tıklayın</a>.</p>
+<script>location.replace({$targetJson});</script>
+</body>
+</html>
+HTML;
+
+        $base = Str::slug($coloringPage->title.'-'.$coloringPage->id);
+        $filename = ($base !== '' ? $base : 'urun-'.$coloringPage->id).'-boyaetkinlik.html';
+
+        return response($html, 200, [
+            'Content-Type' => 'text/html; charset=UTF-8',
+            'Content-Disposition' => 'inline; filename="'.$filename.'"',
+        ]);
+    }
+
+    public function buy(Request $request, ColoringPage $coloringPage)
+    {
+        abort_if($coloringPage->is_free, 403);
+        $shopierUrl = trim((string) ($coloringPage->shopier_product_url ?? ''));
+        abort_if($shopierUrl === '', 422, 'Bu ürün için Shopier bağlantısı henüz tanımlanmadı.');
+
+        return redirect()->away($shopierUrl);
+    }
+
+    public function onlinePaint(ColoringPage $coloringPage, FileFormatDownloadService $downloadService)
+    {
+        abort_unless($coloringPage->is_free, 404);
+
+        return view('frontend.online-paint', [
+            'coloringPage' => $coloringPage,
+            'lineArtUrl' => route('products.online-paint.line-art', $coloringPage),
+            'exportUrl' => route('products.online-paint.export', $coloringPage),
+            'emailUrl' => route('products.online-paint.email', $coloringPage),
+            'exportFormats' => ['png', 'jpg', 'jpeg', 'pdf'],
+        ]);
+    }
+
+    public function onlinePaintLineArt(ColoringPage $coloringPage, FileFormatDownloadService $downloadService): BinaryFileResponse
+    {
+        abort_unless($coloringPage->is_free, 404);
+
+        try {
+            $source = $coloringPage->lineArtFileSource();
+            /** @var FilesystemAdapter $disk */
+            $disk = $source['disk'];
+            $raster = $downloadService->lineArtRasterForPainting($disk, $source['path']);
+        } catch (Throwable $exception) {
+            report($exception);
+            abort(404);
+        }
+
+        $response = response()->file($raster['absolute_path'], [
+            'Content-Type' => 'image/png',
+            'Cache-Control' => 'public, max-age=3600',
+            'Access-Control-Allow-Origin' => request()->getSchemeAndHttpHost(),
+        ]);
+
+        if ($raster['is_temporary']) {
+            $path = $raster['absolute_path'];
+            register_shutdown_function(static function () use ($path): void {
+                @unlink($path);
+            });
+        }
+
+        return $response;
+    }
+
+    public function onlinePaintExport(Request $request, ColoringPage $coloringPage, FileFormatDownloadService $downloadService): BinaryFileResponse|RedirectResponse
+    {
+        abort_unless($coloringPage->is_free, 403);
+
+        $data = $request->validate([
+            'image' => ['required', 'file', 'mimes:png', 'max:15360'],
+            'format' => ['nullable', 'string', 'max:12'],
+        ]);
+
+        $format = $downloadService->normalizeFormat($data['format'] ?? null) ?: 'png';
+        if (! in_array($format, ['png', 'jpg', 'jpeg', 'pdf'], true)) {
+            abort(422, 'Geçersiz format.');
+        }
+
+        $stored = $request->file('image')->store('tmp-painted', 'local');
+        $absolute = Storage::disk('local')->path($stored);
+
+        try {
+            $prepared = $downloadService->preparePaintedExport(
+                $absolute,
+                $coloringPage->title.'-boyanmis',
+                $format
+            );
+
+            $delete = [$absolute];
+            if ($prepared['delete_after_send']) {
+                $delete[] = $prepared['path'];
+            }
+
+            register_shutdown_function(static function () use ($delete): void {
+                foreach ($delete as $path) {
+                    if (is_file($path)) {
+                        @unlink($path);
+                    }
+                }
+            });
+
+            return response()->download($prepared['path'], $prepared['filename']);
+        } catch (Throwable $exception) {
+            Storage::disk('local')->delete($stored);
+            report($exception);
+            abort(422, 'Dosya hazırlanamadı.');
+        }
+    }
+
+    public function onlinePaintEmail(Request $request, ColoringPage $coloringPage, FileFormatDownloadService $downloadService): RedirectResponse
+    {
+        abort_unless($coloringPage->is_free, 403);
+
+        $data = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+            'format' => ['nullable', 'string', 'max:12'],
+            'image' => ['required', 'file', 'mimes:png', 'max:15360'],
+        ]);
+
+        $format = $downloadService->normalizeFormat($data['format'] ?? null) ?: 'png';
+        if (! in_array($format, ['png', 'jpg', 'jpeg', 'pdf'], true)) {
+            return back()->withErrors(['format' => 'Geçersiz dosya formatı.']);
+        }
+
+        $stored = $request->file('image')->store('tmp-painted', 'local');
+        $absolute = Storage::disk('local')->path($stored);
+
+        try {
+            $prepared = $downloadService->preparePaintedExport(
+                $absolute,
+                $coloringPage->title.'-boyanmis',
+                $format
+            );
+
+            try {
+                $this->sendPaintedFileMail(
+                    $data['email'],
+                    $coloringPage->title,
+                    $prepared['path'],
+                    $prepared['filename']
+                );
+            } finally {
+                Storage::disk('local')->delete($stored);
+                if ($prepared['delete_after_send'] && is_file($prepared['path'])) {
+                    @unlink($prepared['path']);
+                }
+            }
+        } catch (Throwable $exception) {
+            Storage::disk('local')->delete($stored);
+            report($exception);
+
+            return back()
+                ->withInput()
+                ->withErrors(['email_send' => 'E-posta gönderilemedi. Lütfen tekrar deneyin.']);
+        }
+
+        return redirect()
+            ->route('products.online-paint', $coloringPage)
+            ->with('paint_email_sent', true);
+    }
+
+    private function sendPaintedFileMail(string $toEmail, string $pageTitle, string $absolutePath, string $attachmentFilename): void
+    {
+        $smtpHost = Setting::getValue('smtp_host', '');
+        $smtpPort = (int) (Setting::getValue('smtp_port', '587') ?: 587);
+        $smtpUsername = Setting::getValue('smtp_username', '');
+        $smtpPassword = Setting::getValue('smtp_password', '');
+        $smtpEncryption = strtolower((string) (Setting::getValue('smtp_encryption', 'tls') ?: 'tls'));
+        $fromEmail = Setting::getValue('smtp_from_email', $smtpUsername);
+        $fromName = Setting::getValue('smtp_from_name', 'Boya Etkinlik');
+
+        if (! $smtpHost || ! $smtpPort || ! $smtpUsername || ! $smtpPassword || ! $fromEmail) {
+            throw new Exception('SMTP ayarları eksik.');
+        }
+
+        $absolutePath = realpath($absolutePath) ?: $absolutePath;
+        if (! is_file($absolutePath) || ! is_readable($absolutePath)) {
+            throw new Exception('Gönderilecek dosya bulunamadı.');
+        }
+
+        $mailer = new PHPMailer(true);
+        $mailer->isSMTP();
+        $mailer->Host = $smtpHost;
+        $mailer->Port = $smtpPort;
+        $mailer->SMTPAuth = true;
+        $mailer->Username = $smtpUsername;
+        $mailer->Password = $smtpPassword;
+        $mailer->SMTPSecure = $smtpEncryption === 'ssl' ? PHPMailer::ENCRYPTION_SMTPS : PHPMailer::ENCRYPTION_STARTTLS;
+        $mailer->SMTPDebug = SMTP::DEBUG_OFF;
+        $mailer->CharSet = 'UTF-8';
+        PhpmailerSmtp::applyTransportDefaults($mailer);
+
+        $mailer->setFrom($fromEmail, $fromName ?: 'Boya Etkinlik');
+        $mailer->addAddress($toEmail);
+
+        $mailer->isHTML(true);
+        $appName = config('app.name', 'Boya Etkinlik');
+        $safeTitle = e($pageTitle);
+        $mailer->Subject = $appName.' — '.$pageTitle.' (online boya eseriniz)';
+        $mailer->Body = <<<HTML
+<!doctype html>
+<html lang="tr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:24px;font-family:Inter,Arial,sans-serif;color:#0f172a;background:#f8fafc;">
+    <p style="margin:0 0 12px;">Merhaba,</p>
+    <p style="margin:0 0 12px;">Online boya ile oluşturduğunuz çalışma ektedir: <strong>{$safeTitle}</strong></p>
+    <p style="margin:0 0 12px;color:#64748b;font-size:14px;">İyi eğlenceler!</p>
+    <p style="margin:16px 0 0;color:#94a3b8;font-size:12px;">{$appName}</p>
+</body>
+</html>
+HTML;
+        $mailer->AltBody = "Online boya çalışmanız ektedir: {$pageTitle}\n\n{$appName}";
+
+        $mailer->addAttachment($absolutePath, $attachmentFilename);
+        $mailer->send();
+    }
+}

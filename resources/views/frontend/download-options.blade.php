@@ -1,0 +1,172 @@
+@extends('layouts.app')
+
+@section('title', 'İndirme Formatı Seç')
+
+@section('content')
+    <x-public-ad-rail :tight="true">
+    <section class="py-12">
+        <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+            <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <p class="text-xs font-semibold uppercase tracking-wide text-indigo-600">İndirme Adımı</p>
+                <h1 class="mt-2 text-2xl font-semibold text-slate-900">Dosya formatını seçin</h1>
+                <p class="mt-2 text-sm text-slate-600">
+                    Satın aldığınız içerik için uygun formatı seçebilirsiniz. Bu sayfaya aynı indirme bağlantısıyla istediğiniz zaman dönebilirsiniz.
+                </p>
+
+                @if (session('download_error'))
+                    <div class="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        {{ session('download_error') }}
+                    </div>
+                @endif
+
+                <div class="mt-6 grid gap-3 sm:grid-cols-2">
+                    @php
+                        $originalFormat = strtolower(pathinfo($transaction->coloringPage->pdf_path, PATHINFO_EXTENSION) ?: 'pdf');
+                        $singleOriginalPdf = count($downloadFormats) === 1 && strtolower($downloadFormats[0]) === 'pdf' && $originalFormat === 'pdf';
+                    @endphp
+                    @if($singleOriginalPdf)
+                        <div class="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <p class="text-sm text-slate-600">Dosya zaten PDF formatında. Doğrudan indirebilirsiniz.</p>
+                            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                                <a
+                                    href="{{ route('download.paid', ['token' => $transaction->download_token, 'format' => 'pdf']) }}"
+                                    class="btn-primary inline-flex w-full items-center justify-center"
+                                >
+                                    PDF İndir
+                                </a>
+                                <button
+                                    type="button"
+                                    onclick="directPrint('{{ route('download.paid.print', ['token' => $transaction->download_token, 'format' => 'pdf']) }}')"
+                                    class="btn-secondary inline-flex w-full items-center justify-center"
+                                >
+                                    Dosyayı Yazdır
+                                </button>
+                            </div>
+                        </div>
+                    @else
+                        @foreach ($downloadFormats as $format)
+                            @php
+                                $formatLabel = strtolower($format) === $originalFormat
+                                    ? 'Orijinal ('.strtoupper($format).')'
+                                    : (strtolower($format) === 'pdf' ? "PDF'e Dönüştür" : strtoupper($format).' Dönüştür');
+                            @endphp
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <p class="text-sm font-semibold text-slate-700">{{ $formatLabel }}</p>
+                                <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                                    <a
+                                        href="{{ route('download.paid', ['token' => $transaction->download_token, 'format' => $format]) }}"
+                                        class="btn-primary inline-flex w-full items-center justify-center"
+                                    >
+                                        İndir
+                                    </a>
+                                    <button
+                                        type="button"
+                                        onclick="directPrint('{{ route('download.paid.print', ['token' => $transaction->download_token, 'format' => $format]) }}')"
+                                        class="btn-secondary inline-flex w-full items-center justify-center"
+                                    >
+                                        Yazdır
+                                    </button>
+                                </div>
+                            </div>
+                        @endforeach
+                    @endif
+                </div>
+            </div>
+        </div>
+    </section>
+    </x-public-ad-rail>
+    <script>
+        function directPrint(url) {
+            var params = new URL(url, window.location.href).searchParams;
+            var fmt = (params.get('format') || '').toLowerCase();
+            var isPdf = fmt === 'pdf' || url.toLowerCase().indexOf('.pdf') !== -1;
+
+            if (isPdf) {
+                fetch(url, { credentials: 'same-origin' })
+                    .then(function (r) { return r.blob(); })
+                    .then(function (blob) {
+                        var blobUrl = URL.createObjectURL(blob);
+                        var iframe = document.createElement('iframe');
+                        iframe.style.cssText = 'position:fixed;top:-200%;left:-200%;width:100vw;height:100vh;border:none;visibility:hidden;';
+                        document.body.appendChild(iframe);
+                        var printed = false;
+                        var doPrint = function () {
+                            if (printed) return;
+                            printed = true;
+                            try {
+                                iframe.contentWindow.focus();
+                                iframe.contentWindow.print();
+                            } catch (e) {}
+                            setTimeout(function () {
+                                if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                                URL.revokeObjectURL(blobUrl);
+                            }, 6000);
+                        };
+                        iframe.onload = function () { setTimeout(doPrint, 800); };
+                        setTimeout(doPrint, 5000);
+                        iframe.src = blobUrl;
+                    })
+                    .catch(function () {
+                        var win = window.open(url, '_blank', 'width=900,height=700,menubar=no,toolbar=no');
+                        if (win) { setTimeout(function () { win.print(); }, 2000); }
+                    });
+            } else {
+                var iframe = document.createElement('iframe');
+                iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:none;';
+                document.body.appendChild(iframe);
+
+                var html = '<!DOCTYPE html><html><head><title></title>'
+                    + '<style>'
+                    + '@page{margin:0;size:auto;}'
+                    + 'html,body{margin:0;padding:0;background:#fff;}'
+                    + 'img{display:block;width:100%;height:100vh;object-fit:contain;}'
+                    + '</style></head><body>'
+                    + '<img src="' + url + '" alt="Yazdirilacak satin alinmis boyama dosyasi gorseli" />'
+                    + '<scr' + 'ipt>'
+                    + 'document.querySelector("img").onload=function(){'
+                    + '  window.focus();window.print();'
+                    + '};'
+                    + '<\/scr' + 'ipt>'
+                    + '</body></html>';
+
+                var doc = iframe.contentDocument || iframe.contentWindow.document;
+                doc.open();
+                doc.write(html);
+                doc.close();
+
+                setTimeout(function () {
+                    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                }, 8000);
+            }
+        }
+
+        (function () {
+            if (typeof window.gtag !== 'function') return;
+
+            var transactionId = @json((string) $transaction->order_id);
+            var purchaseKey = 'ga4_purchase_sent_' + transactionId;
+
+            try {
+                if (localStorage.getItem(purchaseKey) === '1') return;
+            } catch (e) {}
+
+            window.gtag('event', 'purchase', {
+                transaction_id: transactionId,
+                value: @json((float) $transaction->paid_amount),
+                currency: 'TRY',
+                items: [
+                    {
+                        item_id: @json((string) $transaction->coloring_page_id),
+                        item_name: @json((string) ($transaction->coloringPage->title ?? 'Boyama Sayfasi')),
+                        quantity: 1,
+                        price: @json((float) $transaction->paid_amount)
+                    }
+                ]
+            });
+
+            try {
+                localStorage.setItem(purchaseKey, '1');
+            } catch (e) {}
+        })();
+    </script>
+@endsection

@@ -1,0 +1,368 @@
+<?php
+
+use App\Http\Controllers\Admin\AdController as AdminAdController;
+use App\Http\Controllers\Admin\AdminManagementController;
+use App\Http\Controllers\Admin\AdminLogController;
+use App\Http\Controllers\Admin\AuthController as AdminAuthController;
+use App\Http\Controllers\Admin\BlogCategoryController as AdminBlogCategoryController;
+use App\Http\Controllers\Admin\BlogController as AdminBlogController;
+use App\Http\Controllers\Admin\CategoryController as AdminCategoryController;
+use App\Http\Controllers\Admin\ColoringPageController as AdminColoringPageController;
+use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\MemberController as AdminMemberController;
+use App\Http\Controllers\MemberPurchaseSupportController;
+use App\Http\Controllers\Admin\NewsletterController as AdminNewsletterController;
+use App\Http\Controllers\Admin\PurchaseVerificationController as AdminPurchaseVerificationController;
+use App\Http\Controllers\Admin\SettingController as AdminSettingController;
+use App\Http\Controllers\Admin\TransactionController as AdminTransactionController;
+use App\Http\Controllers\Admin\VisitorFeedbackController as AdminVisitorFeedbackController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\BlogController;
+use App\Http\Controllers\ExperimentController;
+use App\Http\Controllers\OnlineExperimentController;
+use App\Http\Controllers\Admin\ExperimentController as AdminExperimentController;
+use App\Http\Controllers\Admin\ExperimentCategoryController as AdminExperimentCategoryController;
+use App\Http\Controllers\ContactController;
+use App\Http\Controllers\ColoringPageController;
+use App\Http\Controllers\DownloadController;
+use App\Http\Controllers\GuestPurchaseRecoveryController;
+use App\Http\Controllers\HomeController;
+use App\Http\Controllers\MemberAccountController;
+use App\Http\Controllers\MemberAuthController;
+use App\Http\Controllers\MemberGoogleAuthController;
+use App\Http\Controllers\NewsletterController;
+use App\Http\Controllers\PaintRoomController;
+use App\Http\Controllers\PaintRoomJoinController;
+use App\Http\Controllers\PurchaseVerificationController;
+use App\Http\Controllers\ShopierController;
+use App\Http\Controllers\SitemapController;
+use App\Http\Controllers\VisitorFeedbackController;
+use Illuminate\Support\Facades\Route;
+
+$adminPath = trim((string) config('app.admin_path', 'yonetim-981400-panel'), '/');
+
+Route::get('/', HomeController::class)->name('home');
+Route::get('/sitemap.xml', [SitemapController::class, 'index'])->name('sitemap');
+Route::get('/login', fn () => abort(404))->name('login');
+Route::get('/yonetim', fn () => abort(404));
+Route::get('/admin-giris', fn () => abort(404));
+Route::any('/admin', fn () => abort(404));
+Route::any('/admin/{any}', fn () => abort(404))->where('any', '.*');
+// Search Console'da görünen kalıcı silinmiş eski URL'ler: hızlı düşüş için 410.
+Route::get('/kategoriler/okul-oncesi-3-yas', fn () => abort(410));
+Route::get('/kategoriler/ozel-egitim-kelime-kartlari', fn () => abort(410));
+Route::get('/boyama/58', fn () => abort(410));
+Route::get('/kategoriler/{slug}', [CategoryController::class, 'show'])->name('categories.show');
+Route::get('/iletisim', [ContactController::class, 'show'])->name('contact.show');
+Route::view('/hakkimizda', 'frontend.hakkimizda')->name('about');
+Route::view('/gizlilik-politikasi', 'frontend.gizlilik-politikasi')->name('privacy');
+Route::view('/kullanim-kosullari', 'frontend.kullanim-kosullari')->name('terms');
+Route::view('/cerez-politikasi', 'frontend.cerez-politikasi')->name('cookies');
+Route::get('/blog', [BlogController::class, 'index'])->name('blog.index');
+Route::get('/blog/kategori/{blogCategory:slug}', [BlogController::class, 'category'])->name('blog.category');
+Route::get('/blog/yaz', [BlogController::class, 'create'])->name('blog.create');
+Route::post('/blog/yaz', [BlogController::class, 'store'])
+    ->middleware('throttle:6,1')
+    ->name('blog.store');
+Route::get('/blog/{blog:slug}', [BlogController::class, 'show'])->name('blog.show');
+Route::get('/deneyler', [ExperimentController::class, 'index'])->name('experiments.index');
+Route::get('/deneyler/kategori/{experimentCategory:slug}', [ExperimentController::class, 'category'])->name('experiments.category');
+Route::get('/deneyler/online-dene', [OnlineExperimentController::class, 'hub'])->name('experiments.online.hub');
+Route::redirect('/deneyler/online-dene/yuruyen-renkler', '/deneyler/online-dene/renk-karisim', 301);
+Route::get('/deneyler/online-dene/{labSlug}', [OnlineExperimentController::class, 'play'])
+    ->where('labSlug', '[a-z0-9\-]+')
+    ->name('experiments.online.play');
+Route::get('/deneyler/{experiment:slug}', [ExperimentController::class, 'show'])->name('experiments.show');
+Route::post('/iletisim', [ContactController::class, 'send'])->name('contact.send');
+Route::post('/iletisim/whatsapp', [ContactController::class, 'sendWhatsApp'])->name('contact.whatsapp');
+Route::post('/e-bulten/kayit', [NewsletterController::class, 'store'])->name('newsletter.store');
+Route::post('/ziyaretci-geri-bildirim', [VisitorFeedbackController::class, 'store'])
+    ->middleware('throttle:8,1')
+    ->name('visitor-feedback.store');
+
+Route::prefix('goruntulu-boyama')->name('paint-room.')->group(function () {
+    Route::get('/', [PaintRoomController::class, 'index'])->name('index');
+    Route::get('/ucretsiz-sayfalar', [PaintRoomController::class, 'freePagesByCategory'])->name('free-pages');
+    Route::get('/katil', [PaintRoomJoinController::class, 'pinForm'])->name('join.form');
+    Route::post('/katil', [PaintRoomJoinController::class, 'pinSubmit'])
+        ->middleware('throttle:8,1')
+        ->name('join.pin');
+    Route::get('/davet/{inviteToken}', [PaintRoomJoinController::class, 'guestForm'])
+        ->where('inviteToken', '[A-Za-z0-9]+')
+        ->name('join.guest');
+    Route::post('/davet/{inviteToken}', [PaintRoomJoinController::class, 'guestSubmit'])
+        ->middleware('throttle:8,1')
+        ->where('inviteToken', '[A-Za-z0-9]+')
+        ->name('join.submit');
+    Route::get('/oda/{room}', [PaintRoomController::class, 'lobby'])->name('lobby');
+    Route::get('/oda/{room}/durum', [PaintRoomController::class, 'status'])->name('status');
+    Route::get('/oda/{room}/sinyal', [PaintRoomController::class, 'pollSignals'])->name('signals.poll');
+    Route::post('/oda/{room}/sinyal/al', [PaintRoomController::class, 'pollSignals'])->name('signals.poll.post');
+    Route::get('/oda/{room}/cizgi', [PaintRoomController::class, 'lineArt'])->name('line-art');
+    Route::get('/oda/{room}/tuval', [PaintRoomController::class, 'loadCanvas'])->name('canvas.load');
+    Route::post('/oda/{room}/tuval', [PaintRoomController::class, 'saveCanvas'])->name('canvas.save');
+    Route::get('/oda/{room}/sinyal/saglik', [PaintRoomController::class, 'signalHealth'])->name('signals.health');
+    Route::post('/oda/{room}/sinyal', [PaintRoomController::class, 'sendSignal'])->name('signals.send');
+    Route::post('/oda/{room}/mesaj', [PaintRoomController::class, 'sendChat'])->name('chat.send');
+    Route::post('/oda/{room}/mesaj/al', [PaintRoomController::class, 'pollChat'])->name('chat.poll');
+    Route::get('/oda/{room}/mesaj/gecmis', [PaintRoomController::class, 'chatHistory'])->name('chat.history');
+    Route::post('/oda/{room}/boyama-degistir', [PaintRoomController::class, 'changeColoringPage'])->name('page.change');
+    Route::post('/oda/{room}/ayril', [PaintRoomController::class, 'leave'])->name('leave');
+
+    Route::middleware(['member', 'member.code'])->group(function () {
+        Route::post('/oda-olustur', [PaintRoomController::class, 'create'])->name('create');
+    });
+});
+
+Route::get('/boyama/{coloringPage}', [ColoringPageController::class, 'show'])->name('products.show');
+Route::get('/boyama/{coloringPage}/preview-image', [ColoringPageController::class, 'previewImage'])->name('products.preview-image');
+Route::get('/boyama/{coloringPage}/urun-baglanti.html', [ColoringPageController::class, 'previewDoorHtml'])->name('products.preview-door');
+Route::post('/boyama/{coloringPage}/buy', [ColoringPageController::class, 'buy'])->name('products.buy');
+Route::get('/boyama/{coloringPage}/free-download', [ColoringPageController::class, 'downloadFree'])->name('products.download.free');
+Route::get('/boyama/{coloringPage}/free-print', [ColoringPageController::class, 'printFree'])->name('products.print.free');
+Route::post('/boyama/{coloringPage}/ucretsiz-eposta', [ColoringPageController::class, 'sendFreeToEmail'])
+    ->middleware('throttle:6,1')
+    ->name('products.free.email');
+Route::redirect('/boyama/{coloringPage}/online_boya', '/boyama/{coloringPage}/online-boya');
+Route::get('/boyama/{coloringPage}/online-boya', [ColoringPageController::class, 'onlinePaint'])->name('products.online-paint');
+Route::get('/boyama/{coloringPage}/online-boya/cizgi', [ColoringPageController::class, 'onlinePaintLineArt'])->name('products.online-paint.line-art');
+Route::post('/boyama/{coloringPage}/online-boya/indir', [ColoringPageController::class, 'onlinePaintExport'])
+    ->middleware('throttle:20,1')
+    ->name('products.online-paint.export');
+Route::post('/boyama/{coloringPage}/online-boya/eposta', [ColoringPageController::class, 'onlinePaintEmail'])
+    ->middleware('throttle:6,1')
+    ->name('products.online-paint.email');
+Route::get('/shopier/{transaction}/redirect', [ShopierController::class, 'redirect'])->name('shopier.redirect');
+Route::post('/shopier/callback', [ShopierController::class, 'callback'])->name('shopier.callback');
+Route::get('/download/{token}', [DownloadController::class, 'paid'])->name('download.paid');
+Route::get('/download/{token}/print', [DownloadController::class, 'printPaid'])->name('download.paid.print');
+
+Route::get('/indirme-linki-tekrar', [GuestPurchaseRecoveryController::class, 'show'])->name('guest.purchase.recovery');
+Route::post('/indirme-linki-tekrar', [GuestPurchaseRecoveryController::class, 'send'])
+    ->middleware('throttle:6,1')
+    ->name('guest.purchase.recovery.submit');
+Route::get('/satin-alim-dogrula', [PurchaseVerificationController::class, 'show'])->name('purchase.verification.show');
+Route::post('/satin-alim-dogrula', [PurchaseVerificationController::class, 'store'])
+    ->middleware('throttle:6,1')
+    ->name('purchase.verification.store');
+Route::get('/satin-alim-dogrula/{token}', [PurchaseVerificationController::class, 'status'])->name('purchase.verification.status');
+Route::post('/satin-alim-dogrula/{token}/eposta', [PurchaseVerificationController::class, 'sendEmail'])
+    ->middleware('throttle:6,1')
+    ->name('purchase.verification.email');
+
+Route::middleware('guest')->group(function () {
+    Route::get('/uye-ol', [MemberAuthController::class, 'showRegister'])->name('member.register');
+    Route::post('/uye-ol', [MemberAuthController::class, 'register'])
+        ->middleware('throttle:10,1')
+        ->name('member.register.submit');
+    Route::get('/giris-yap', [MemberAuthController::class, 'showLogin'])->name('member.login');
+    Route::post('/giris-yap', [MemberAuthController::class, 'login'])->name('member.login.submit');
+    Route::get('/sifremi-unuttum', [MemberAuthController::class, 'showForgotPassword'])->name('member.forgot-password');
+    Route::post('/sifremi-unuttum', [MemberAuthController::class, 'sendForgotPassword'])
+        ->middleware('throttle:5,1')
+        ->name('member.forgot-password.submit');
+
+    Route::get('/auth/google', [MemberGoogleAuthController::class, 'redirect'])
+        ->middleware('throttle:12,1')
+        ->name('member.google.redirect');
+    Route::get('/auth/google/callback', [MemberGoogleAuthController::class, 'callback'])
+        ->middleware('throttle:12,1')
+        ->name('member.google.callback');
+});
+
+Route::middleware('member')->group(function () {
+    Route::get('/uyelik-dogrulama', [MemberAuthController::class, 'showRegisterVerify'])->name('member.register.verify.form');
+    Route::post('/uyelik-dogrulama', [MemberAuthController::class, 'verifyRegister'])
+        ->middleware('throttle:24,1')
+        ->name('member.register.verify.submit');
+
+    Route::get('/giris-dogrulama', [MemberAuthController::class, 'showLoginVerify'])->name('member.login.verify.form');
+    Route::post('/giris-dogrulama', [MemberAuthController::class, 'verifyLogin'])
+        ->middleware('throttle:24,1')
+        ->name('member.login.verify.submit');
+});
+
+Route::middleware(['member', 'member.code'])->group(function () {
+    Route::get('/hesabim', [MemberAccountController::class, 'account'])->name('member.account');
+    Route::post('/hesabim', [MemberAccountController::class, 'update'])->name('member.account.update');
+
+    Route::get('/sepetim', [MemberAccountController::class, 'cart'])->name('member.cart');
+    Route::post('/sepetim', [MemberAccountController::class, 'addToCart'])->name('member.cart.add');
+    Route::post('/sepetim/{cartItem}/odeme', [MemberAccountController::class, 'checkoutFromCart'])->name('member.cart.checkout');
+    Route::delete('/sepetim/{cartItem}', [MemberAccountController::class, 'removeFromCart'])->name('member.cart.remove');
+
+    Route::get('/satin-alinanlar', [MemberAccountController::class, 'purchases'])->name('member.purchases');
+    Route::get('/satin-alinanlar/{transaction}/indir', [MemberAccountController::class, 'downloadPurchased'])->name('member.purchases.download');
+    Route::post('/satin-alinanlar/{transaction}/eposta-gonder', [MemberAccountController::class, 'sendPurchasedToEmail'])->name('member.purchases.email');
+    Route::post('/satin-alinanlar/destek', [MemberPurchaseSupportController::class, 'store'])
+        ->middleware('throttle:8,1')
+        ->name('member.purchases.support.store');
+});
+
+Route::get('/satin-alinanlar/paylas/{transaction}/indir', [MemberAccountController::class, 'sharedDownload'])
+    ->name('member.purchases.shared-download');
+
+Route::post('/hesabim/cikis', [MemberAuthController::class, 'logout'])
+    ->middleware('member')
+    ->name('member.logout');
+
+Route::prefix($adminPath)->name('admin.')->group(function () {
+    Route::middleware('guest')->group(function () {
+        Route::get('/giris', [AdminAuthController::class, 'showLogin'])->name('login');
+        Route::post('/giris', [AdminAuthController::class, 'login'])->name('login.submit');
+        Route::get('/kayit', [AdminAuthController::class, 'showRegister'])->name('register');
+        Route::post('/kayit', [AdminAuthController::class, 'register'])
+            ->middleware('throttle:8,1')
+            ->name('register.submit');
+        Route::get('/kayit-dogrulama', [AdminAuthController::class, 'showRegisterVerify'])->name('register.verify.form');
+        Route::post('/kayit-dogrulama', [AdminAuthController::class, 'verifyRegister'])
+            ->middleware('throttle:24,1')
+            ->name('register.verify.submit');
+        Route::get('/sifremi-unuttum', [AdminAuthController::class, 'showForgotPassword'])->name('forgot-password');
+        Route::post('/sifremi-unuttum', [AdminAuthController::class, 'sendForgotPassword'])
+            ->middleware('throttle:5,1')
+            ->name('forgot-password.submit');
+    });
+
+    Route::middleware(['auth', 'admin'])->group(function () {
+        Route::get('/kod-dogrulama', [AdminAuthController::class, 'showVerify'])->name('verify.form');
+        Route::post('/kod-dogrulama', [AdminAuthController::class, 'verify'])
+            ->middleware('throttle:24,1')
+            ->name('verify.submit');
+        Route::post('/logout', [AdminAuthController::class, 'logout'])->name('logout');
+    });
+
+    Route::middleware(['auth', 'admin', 'admin.code', 'admin.activity'])->group(function () {
+        Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
+
+        Route::get('/uyeler', [AdminMemberController::class, 'index'])->name('members.index');
+        Route::get('/uyeler/{user}', [AdminMemberController::class, 'show'])->name('members.show');
+        Route::delete('/uyeler/{user}', [AdminMemberController::class, 'destroy'])->name('members.destroy');
+        Route::post('/uyeler/{user}/destek/{ticket}/yanit', [AdminMemberController::class, 'replyPurchaseSupport'])
+            ->middleware('throttle:30,1')
+            ->name('members.support.reply');
+
+        Route::get('/categories', [AdminCategoryController::class, 'index'])->name('categories.index');
+        Route::get('/categories/{category}/edit', [AdminCategoryController::class, 'edit'])->name('categories.edit');
+        Route::post('/categories', [AdminCategoryController::class, 'store'])->name('categories.store');
+        Route::put('/categories/{category}', [AdminCategoryController::class, 'update'])->name('categories.update');
+        Route::delete('/categories/{category}', [AdminCategoryController::class, 'destroy'])->name('categories.destroy');
+
+        Route::get('/pages', [AdminColoringPageController::class, 'index'])->name('pages.index');
+        Route::get('/pages/{coloringPage}/edit', [AdminColoringPageController::class, 'edit'])->name('pages.edit');
+        Route::post('/pages', [AdminColoringPageController::class, 'store'])->name('pages.store');
+        Route::put('/pages/{coloringPage}', [AdminColoringPageController::class, 'update'])->name('pages.update');
+        Route::delete('/pages/{coloringPage}', [AdminColoringPageController::class, 'destroy'])->name('pages.destroy');
+
+        Route::get('/blogs', [AdminBlogController::class, 'index'])->name('blogs.index');
+        Route::post('/blogs', [AdminBlogController::class, 'store'])->name('blogs.store');
+        Route::post('/blog-categories', [AdminBlogCategoryController::class, 'store'])->name('blog-categories.store');
+        Route::put('/blog-categories/{blogCategory}', [AdminBlogCategoryController::class, 'update'])->name('blog-categories.update');
+        Route::delete('/blog-categories/{blogCategory}', [AdminBlogCategoryController::class, 'destroy'])->name('blog-categories.destroy');
+        Route::put('/blogs/{blog}', [AdminBlogController::class, 'update'])->name('blogs.update');
+        Route::post('/blogs/{blog}/approve', [AdminBlogController::class, 'approve'])->name('blogs.approve');
+        Route::post('/blogs/{blog}/reject', [AdminBlogController::class, 'reject'])->name('blogs.reject');
+        Route::delete('/blogs/{blog}', [AdminBlogController::class, 'destroy'])->name('blogs.destroy');
+
+        Route::get('/deneyler', [AdminExperimentController::class, 'index'])->name('experiments.index');
+        Route::post('/deneyler', [AdminExperimentController::class, 'store'])->name('experiments.store');
+        Route::post('/deney-kategorileri', [AdminExperimentCategoryController::class, 'store'])->name('experiment-categories.store');
+        Route::put('/deney-kategorileri/{experimentCategory}', [AdminExperimentCategoryController::class, 'update'])->name('experiment-categories.update');
+        Route::delete('/deney-kategorileri/{experimentCategory}', [AdminExperimentCategoryController::class, 'destroy'])->name('experiment-categories.destroy');
+        Route::put('/deneyler/{experiment}', [AdminExperimentController::class, 'update'])->name('experiments.update');
+        Route::post('/deneyler/{experiment}/yayinla', [AdminExperimentController::class, 'publish'])->name('experiments.publish');
+        Route::post('/deneyler/{experiment}/yayindan-kaldir', [AdminExperimentController::class, 'unpublish'])->name('experiments.unpublish');
+        Route::delete('/deneyler/{experiment}', [AdminExperimentController::class, 'destroy'])->name('experiments.destroy');
+
+        Route::get('/settings', [AdminSettingController::class, 'index'])->name('settings.index');
+        Route::post('/settings', [AdminSettingController::class, 'update'])->name('settings.update');
+
+        Route::get('/ads', [AdminAdController::class, 'index'])->name('ads.index');
+        Route::post('/ads', [AdminAdController::class, 'update'])->name('ads.update');
+
+        Route::get('/transactions', [AdminTransactionController::class, 'index'])->name('transactions.index');
+        Route::post('/transactions/{transaction}/approve', [AdminTransactionController::class, 'approve'])->name('transactions.approve');
+        Route::post('/transactions/{transaction}/reject', [AdminTransactionController::class, 'reject'])->name('transactions.reject');
+        Route::get('/purchase-verifications', [AdminPurchaseVerificationController::class, 'index'])->name('purchase-verifications.index');
+        Route::post('/purchase-verifications/{purchaseVerification}/approve', [AdminPurchaseVerificationController::class, 'approve'])->name('purchase-verifications.approve');
+        Route::post('/purchase-verifications/{purchaseVerification}/reject', [AdminPurchaseVerificationController::class, 'reject'])->name('purchase-verifications.reject');
+
+        Route::get('/newsletter', [AdminNewsletterController::class, 'index'])->name('newsletter.index');
+        Route::post('/newsletter/send', [AdminNewsletterController::class, 'sendToSubscriber'])->name('newsletter.send');
+        Route::post('/newsletter/send-bulk', [AdminNewsletterController::class, 'sendBulk'])->name('newsletter.send.bulk');
+        Route::delete('/newsletter/{subscriber}', [AdminNewsletterController::class, 'destroy'])->name('newsletter.destroy');
+
+        Route::get('/visitor-feedback', [AdminVisitorFeedbackController::class, 'index'])->name('visitor-feedback.index');
+        Route::post('/visitor-feedback/ayarlar', [AdminVisitorFeedbackController::class, 'updateSettings'])->name('visitor-feedback.settings');
+        Route::post('/visitor-feedback/{visitorFeedback}/onayla', [AdminVisitorFeedbackController::class, 'approve'])->name('visitor-feedback.approve');
+        Route::post('/visitor-feedback/{visitorFeedback}/eposta-gorunurluk', [AdminVisitorFeedbackController::class, 'toggleEmail'])->name('visitor-feedback.toggle-email');
+        Route::post('/visitor-feedback/{visitorFeedback}/yanit', [AdminVisitorFeedbackController::class, 'updateReply'])->name('visitor-feedback.reply');
+        Route::post('/visitor-feedback/{visitorFeedback}/yanit-yayinla', [AdminVisitorFeedbackController::class, 'publishReply'])->name('visitor-feedback.publish-reply');
+        Route::delete('/visitor-feedback/{visitorFeedback}', [AdminVisitorFeedbackController::class, 'destroy'])->name('visitor-feedback.destroy');
+
+        Route::get('/admin-yonetimi', [AdminManagementController::class, 'index'])->name('admin-users.index');
+        Route::get('/admin-log-kayitlari', [AdminLogController::class, 'index'])->name('logs.index');
+        Route::post('/admin-yonetimi/yeni-admin', [AdminManagementController::class, 'store'])->name('admin-users.create.submit');
+        Route::get('/admin-yonetimi/yeni-admin/dogrulama', [AdminManagementController::class, 'showCreateVerify'])->name('admin-users.create.verify.form');
+        Route::post('/admin-yonetimi/yeni-admin/dogrulama', [AdminManagementController::class, 'verifyCreate'])
+            ->middleware('throttle:24,1')
+            ->name('admin-users.create.verify.submit');
+        Route::put('/admin-yonetimi/{user}/profil', [AdminManagementController::class, 'updateProfile'])->name('admin-users.profile.update');
+        Route::post('/admin-yonetimi/{user}/sifre', [AdminManagementController::class, 'updatePassword'])->name('admin-users.password.update');
+        Route::delete('/admin-yonetimi/{user}', [AdminManagementController::class, 'destroy'])->name('admin-users.destroy');
+    });
+});
+
+Route::get('/_mail-fpm-test/{secret}', function (string $secret) {
+    $configured = trim((string) config('app.mail_web_test_secret', ''));
+
+    if ($configured === '') {
+        return response(
+            "MAIL_WEB_TEST_SECRET .env içinde tanımlı değil; bu yüzden önce 404 görüyordunuz.\n\n"
+            ."Sunucuda:\n"
+            ."1) nano /var/www/boyaetkinlik/.env\n"
+            ."2) Satır ekle (örnek): MAIL_WEB_TEST_SECRET=benim-gizli-anahtar\n"
+            ."3) php artisan config:clear && sudo systemctl restart php8.4-fpm\n"
+            ."4) Tarayıcı: http://IP/_mail-fpm-test/benim-gizli-anahtar\n\n"
+            ."URL’deki son parça, .env’deki değer ile birebir aynı olmalı.\n"
+            ."Test bitince MAIL_WEB_TEST_SECRET satırını silin.\n",
+            503,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+
+    if (! hash_equals($configured, $secret)) {
+        abort(404);
+    }
+
+    $to = trim((string) (\App\Models\Setting::getValue('contact_email', '') ?? ''));
+    if ($to === '') {
+        return response(
+            "HATA: contact_email bos\nSAPI: ".PHP_SAPI."\ndisable_functions: ".ini_get('disable_functions'),
+            500,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+
+    try {
+        \App\Support\SiteMailer::send(
+            $to,
+            'Web (PHP-FPM) SMTP test',
+            '<p>Tarayıcı / FPM üzerinden test.</p>',
+            'Tarayıcı / FPM üzerinden test.'
+        );
+
+        return response(
+            "OK: FPM ile SiteMailer gönderdi. Gelen kutusu: {$to}\nSAPI: ".PHP_SAPI,
+            200,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    } catch (\Throwable $e) {
+        return response(
+            'HATA: '.$e->getMessage()."\nSınıf: ".get_class($e)."\nSAPI: ".PHP_SAPI
+            ."\ndisable_functions: ".ini_get('disable_functions'),
+            500,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+})->where('secret', '[^/]+');

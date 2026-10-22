@@ -1,0 +1,113 @@
+<?php
+
+namespace App\Models;
+
+// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Str;
+
+class User extends Authenticatable
+{
+    /** @use HasFactory<\Database\Factories\UserFactory> */
+    use HasFactory, Notifiable;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var list<string>
+     */
+    protected $fillable = [
+        'name',
+        'first_name',
+        'last_name',
+        'email',
+        'phone',
+        'password',
+        'google_id',
+        'avatar',
+        'is_admin',
+    ];
+
+    /**
+     * The attributes that should be hidden for serialization.
+     *
+     * @var list<string>
+     */
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+            'is_admin' => 'boolean',
+        ];
+    }
+
+    /**
+     * Aynı posta kutusuna yönelik büyük/küçük harf varyasyonlarıyla çift kayıt oluşmasın.
+     */
+    public function setEmailAttribute(?string $value): void
+    {
+        $this->attributes['email'] = $value === null || $value === ''
+            ? $value
+            : Str::lower(trim($value));
+    }
+
+    public function cartItems(): HasMany
+    {
+        return $this->hasMany(CartItem::class);
+    }
+
+    public function transactions(): HasMany
+    {
+        return $this->hasMany(Transaction::class);
+    }
+
+    public function purchaseSupportTickets(): HasMany
+    {
+        return $this->hasMany(PurchaseSupportTicket::class);
+    }
+
+    public function reviewedPurchaseVerifications(): HasMany
+    {
+        return $this->hasMany(PurchaseVerificationRequest::class, 'reviewed_by');
+    }
+
+    public function adminActivityLogs(): HasMany
+    {
+        return $this->hasMany(AdminActivityLog::class, 'admin_id');
+    }
+
+    public function getDisplayNameAttribute(): string
+    {
+        $fullName = trim(($this->first_name ?? '').' '.($this->last_name ?? ''));
+
+        if ($fullName !== '') {
+            return $fullName;
+        }
+
+        return (string) $this->name;
+    }
+
+    public function usesGoogleAuth(): bool
+    {
+        return $this->google_id !== null && $this->google_id !== '';
+    }
+
+    public function isGoogleOnly(): bool
+    {
+        return $this->usesGoogleAuth() && blank($this->getRawOriginal('password'));
+    }
+}
