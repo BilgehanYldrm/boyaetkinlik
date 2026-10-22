@@ -660,7 +660,7 @@
     <div class="border-t border-white/20">
         <div class="mx-auto grid max-w-7xl grid-cols-1 items-center gap-3 px-4 py-3 text-xs text-indigo-100/90 md:grid-cols-3">
             <div class="relative z-20 inline-flex flex-wrap items-center justify-center gap-2 md:justify-start">
-                <span class="select-none">© 2026 Burak Gül tarafından geliştirilmiştir.</span>
+                <span class="select-none">© 2026 Bilgehan Yıldırım tarafından geliştirilmiştir.</span>
                 {{-- Gizli giriş: geniş tıklama alanı + belirgin nokta (yönetim giriş sayfası) --}}
                 <a
                     href="{{ route('admin.login') }}"
@@ -680,13 +680,13 @@
             </p>
             <div class="flex flex-wrap items-center justify-center gap-2 md:justify-end">
                 <a
-                    href="mailto:burakgul3085@gmail.com"
+                    href="mailto:by02004@gmail.com"
                     class="break-all rounded-md px-2 py-1 font-medium text-white/90 transition hover:bg-white/10 hover:text-white"
                 >
-                    burakgul3085@gmail.com
+                    by02004@gmail.com
                 </a>
                 <a
-                    href="https://www.linkedin.com/in/burakgul1006/"
+                    href="https://www.linkedin.com/in/bilgehan-yıldırım--/"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="rounded-md px-2 py-1 font-medium text-fuchsia-200 transition hover:bg-white/10 hover:text-fuchsia-100"

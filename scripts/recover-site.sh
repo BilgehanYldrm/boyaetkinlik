@@ -4,7 +4,7 @@ set -u
 
 cd /var/www/boyaetkinlik
 
-DEPLOY_USER="${SUDO_USER:-${USER:-burakadmin}}"
+DEPLOY_USER="${SUDO_USER:-${USER:-bilgehanadmin}}"
 
 run() {
   echo ""

@@ -26,7 +26,7 @@ set_var_if_missing "GOOGLE_CLIENT_ID" ""
 set_var_if_missing "GOOGLE_CLIENT_SECRET" ""
 set_var_if_missing "GOOGLE_REDIRECT_URI" "https://boyaetkinlik.com/auth/google/callback"
 
-sudo chown "${SUDO_USER:-${USER:-burakadmin}}:www-data" "$ENV_FILE" 2>/dev/null || true
+sudo chown "${SUDO_USER:-${USER:bilgehanadmin}}:www-data" "$ENV_FILE" 2>/dev/null || true
 sudo chmod 640 "$ENV_FILE" 2>/dev/null || chmod 640 "$ENV_FILE"
 
 echo "Google OAuth .env satırları hazır."

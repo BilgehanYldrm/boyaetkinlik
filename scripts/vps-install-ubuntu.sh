@@ -26,7 +26,7 @@ LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 DB_PASS="${DB_PASS:-}"
 SKIP_CERTBOT="${SKIP_CERTBOT:-0}"
 APP_DIR="${APP_DIR:-/var/www/boyaetkinlik}"
-GIT_REPO="${GIT_REPO:-https://github.com/Burakgul3085/boyaetkinlik.git}"
+GIT_REPO="${GIT_REPO:-https://github.com/BilgehanYldrm/boyaetkinlik.git}"
 # composer.lock (Symfony 8.x) PHP 8.4 ister; 8.3 ile composer install başarısız olur
 PHP_VERSION="${PHP_VERSION:-8.4}"
 
